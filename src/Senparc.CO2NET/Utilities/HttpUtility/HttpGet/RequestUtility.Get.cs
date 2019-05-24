@@ -1,7 +1,7 @@
 ﻿#region Apache License Version 2.0
 /*----------------------------------------------------------------
 
-Copyright 2018 Jeffrey Su & Suzhou Senparc Network Technology Co.,Ltd.
+Copyright 2019 Suzhou Senparc Network Technology Co.,Ltd.
 
 Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file
 except in compliance with the License. You may obtain a copy of the License at
@@ -13,7 +13,7 @@ License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF 
 either express or implied. See the License for the specific language governing permissions
 and limitations under the License.
 
-Detail: https://github.com/JeffreySu/WeiXinMPSDK/blob/master/license.md
+Detail: https://github.com/Senparc/Senparc.CO2NET/blob/master/LICENSE
 
 ----------------------------------------------------------------*/
 #endregion Apache License Version 2.0
@@ -28,6 +28,10 @@ Detail: https://github.com/JeffreySu/WeiXinMPSDK/blob/master/license.md
     创建标识：Senparc - 20171006
 
     修改描述：移植Get方法过来
+
+    修改标识：Senparc - 20190429
+    修改描述：v0.7.0 优化 HttpClient，重构 RequestUtility（包括 Post 和 Get），引入 HttpClientFactory 机制
+
 
 ----------------------------------------------------------------*/
 
@@ -46,7 +50,7 @@ using System.Web;
 using System.Net.Http;
 using System.Net.Http.Headers;
 #endif
-#if NETSTANDARD1_6 || NETSTANDARD2_0 || NETCOREAPP2_0 || NETCOREAPP2_1
+#if NETSTANDARD2_0
 using Microsoft.AspNetCore.Http;
 using Senparc.CO2NET.WebProxy;
 #endif
@@ -82,13 +86,13 @@ namespace Senparc.CO2NET.HttpUtility
                 request.CookieContainer = cookieContainer;
             }
 
-            HttpClientHeader(request, refererUrl, useAjax, timeOut);//设置头信息
+            HttpClientHeader(request, refererUrl, useAjax, null, timeOut);//设置头信息
 
             return request;
         }
 #endif
 
-#if NETSTANDARD1_6 || NETSTANDARD2_0 || NETCOREAPP2_0 || NETCOREAPP2_1
+#if NETSTANDARD2_0
         /// <summary>
         /// .NET Core 版本的HttpWebRequest参数设置
         /// </summary>
@@ -97,22 +101,15 @@ namespace Senparc.CO2NET.HttpUtility
             Encoding encoding = null, X509Certificate2 cer = null,
             string refererUrl = null, bool useAjax = false, int timeOut = Config.TIME_OUT)
         {
-
-            var handler = new HttpClientHandler
-            {
-                UseCookies = true,
-                CookieContainer = cookieContainer ?? new CookieContainer(),
-                UseProxy = _webproxy != null,
-                Proxy = _webproxy,
-            };
+            var handler = HttpClientHelper.GetHttpClientHandler(cookieContainer, RequestUtility.SenparcHttpClientWebProxy, DecompressionMethods.GZip);
 
             if (cer != null)
             {
                 handler.ClientCertificates.Add(cer);
             }
 
-            HttpClient httpClient = new HttpClient(handler);
-            HttpClientHeader(httpClient, refererUrl, useAjax, timeOut);
+            HttpClient httpClient = SenparcDI.GetRequiredService<SenparcHttpClient>().Client;
+            HttpClientHeader(httpClient, refererUrl, useAjax, null, timeOut);
 
             return httpClient;
         }
@@ -135,13 +132,11 @@ namespace Senparc.CO2NET.HttpUtility
             wc.Encoding = encoding ?? Encoding.UTF8;
             return wc.DownloadString(url);
 #else
-            var handler = new HttpClientHandler
-            {
-                UseProxy = _webproxy != null,
-                Proxy = _webproxy,
-            };
+            var handler = HttpClientHelper.GetHttpClientHandler(null, SenparcHttpClientWebProxy, DecompressionMethods.GZip);
 
-            HttpClient httpClient = new HttpClient(handler);
+
+            HttpClient httpClient = SenparcDI.GetRequiredService<SenparcHttpClient>().Client;
+
             return httpClient.GetStringAsync(url).Result;
 #endif
         }
@@ -181,7 +176,12 @@ namespace Senparc.CO2NET.HttpUtility
 #else
 
             var httpClient = HttpGet_Common_NetCore(url, cookieContainer, encoding, cer, refererUrl, useAjax, timeOut);
-            return httpClient.GetStringAsync(url).Result;
+
+            var response = httpClient.GetAsync(url).GetAwaiter().GetResult();//获取响应信息
+
+            HttpClientHelper.SetResponseCookieContainer(cookieContainer, response);//设置 Cookie
+
+            return response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
 #endif
         }
 
@@ -230,6 +230,9 @@ namespace Senparc.CO2NET.HttpUtility
             var httpClient = HttpGet_Common_NetCore(url, cookieContainer, encoding, cer, refererUrl, useAjax, timeOut);
             var task = httpClient.GetAsync(url);
             HttpResponseMessage response = task.Result;
+
+            HttpClientHelper.SetResponseCookieContainer(cookieContainer, response);//设置 Cookie
+
             return response;
         }
 
@@ -252,16 +255,16 @@ namespace Senparc.CO2NET.HttpUtility
             WebClient wc = new WebClient();
             wc.Proxy = _webproxy;
             wc.Encoding = encoding ?? Encoding.UTF8;
-            return await wc.DownloadStringTaskAsync(url);
+            return await wc.DownloadStringTaskAsync(url).ConfigureAwait(false);
 #else
             var handler = new HttpClientHandler
             {
-                UseProxy = _webproxy != null,
-                Proxy = _webproxy,
+                UseProxy = SenparcHttpClientWebProxy != null,
+                Proxy = SenparcHttpClientWebProxy,
             };
 
-            HttpClient httpClient = new HttpClient(handler);
-            return await httpClient.GetStringAsync(url);
+            HttpClient httpClient = SenparcDI.GetRequiredService<SenparcHttpClient>().Client;
+            return await httpClient.GetStringAsync(url).ConfigureAwait(false);
 #endif
 
         }
@@ -282,7 +285,7 @@ namespace Senparc.CO2NET.HttpUtility
 #if NET35 || NET40 || NET45
             HttpWebRequest request = HttpGet_Common_Net45(url, cookieContainer, encoding, cer, refererUrl, useAjax, timeOut);
 
-            HttpWebResponse response = (HttpWebResponse)(await request.GetResponseAsync());
+            HttpWebResponse response = (HttpWebResponse)(await request.GetResponseAsync().ConfigureAwait(false));
 
             if (cookieContainer != null)
             {
@@ -293,13 +296,20 @@ namespace Senparc.CO2NET.HttpUtility
             {
                 using (StreamReader myStreamReader = new StreamReader(responseStream, encoding ?? Encoding.GetEncoding("utf-8")))
                 {
-                    string retString = await myStreamReader.ReadToEndAsync();
+                    string retString = await myStreamReader.ReadToEndAsync().ConfigureAwait(false);
                     return retString;
                 }
             }
 #else
             var httpClient = HttpGet_Common_NetCore(url, cookieContainer, encoding, cer, refererUrl, useAjax, timeOut);
-            return await httpClient.GetStringAsync(url);
+
+            var response = await httpClient.GetAsync(url).ConfigureAwait(false);//获取响应信息
+
+            HttpClientHelper.SetResponseCookieContainer(cookieContainer, response);//设置 Cookie
+
+            var retString = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+
+            return retString;
 #endif
         }
 

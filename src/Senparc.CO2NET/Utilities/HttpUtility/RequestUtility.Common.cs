@@ -1,7 +1,7 @@
 ﻿#region Apache License Version 2.0
 /*----------------------------------------------------------------
 
-Copyright 2018 Jeffrey Su & Suzhou Senparc Network Technology Co.,Ltd.
+Copyright 2019 Suzhou Senparc Network Technology Co.,Ltd.
 
 Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file
 except in compliance with the License. You may obtain a copy of the License at
@@ -13,7 +13,7 @@ License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF 
 either express or implied. See the License for the specific language governing permissions
 and limitations under the License.
 
-Detail: https://github.com/JeffreySu/WeiXinMPSDK/blob/master/license.md
+Detail: https://github.com/Senparc/Senparc.CO2NET/blob/master/LICENSE
 
 ----------------------------------------------------------------*/
 #endregion Apache License Version 2.0
@@ -47,6 +47,20 @@ Detail: https://github.com/JeffreySu/WeiXinMPSDK/blob/master/license.md
     修改标识：Senparc - 20180518
     修改描述：v4.21.0 支持 .NET Core 2.1.0-rc1-final 添加编译条件
 
+    -- CO2NET --
+
+    修改标识：Senparc - 20181009
+    修改描述：v0.2.15 Post 方法添加 headerAddition参数
+
+    修改标识：Senparc - 20181215
+    修改描述：v0.3.1 更新 RequestUtility.GetQueryString() 方法
+
+    修改标识：Senparc - 20190429
+    修改描述：v0.7.0 优化 HttpClient，重构 RequestUtility（包括 Post 和 Get），引入 HttpClientFactory 机制
+
+    修改标识：Senparc - 20190521
+    修改描述：v0.7.3 .NET Core 提供多证书注册功能
+
 ----------------------------------------------------------------*/
 
 using System;
@@ -66,7 +80,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using Senparc.CO2NET.Extensions;
 #endif
-#if NETSTANDARD1_6 || NETSTANDARD2_0 || NETCOREAPP2_0 || NETCOREAPP2_1
+#if NETSTANDARD2_0
 using Microsoft.AspNetCore.Http;
 #endif
 
@@ -107,7 +121,12 @@ namespace Senparc.CO2NET.HttpUtility
             _webproxy = null;
         }
 #else
-        private static IWebProxy _webproxy = null;
+
+        /// <summary>
+        /// 作用于 SenparcHttpClient 的 WebProxy（需要在 AddSenparcGlobalServices 之前定义）
+        /// </summary>
+        public static IWebProxy SenparcHttpClientWebProxy { get; set; } = null;
+
         /// <summary>
         /// 设置Web代理
         /// </summary>
@@ -121,7 +140,7 @@ namespace Senparc.CO2NET.HttpUtility
             cred = new NetworkCredential(username, password);
             if (!string.IsNullOrEmpty(host))
             {
-                _webproxy = new CoreWebProxy(new Uri(host + ":" + port ?? "80"), cred);
+                SenparcHttpClientWebProxy = new CoreWebProxy(new Uri(host + ":" + port ?? "80"), cred);
             }
         }
 
@@ -130,7 +149,7 @@ namespace Senparc.CO2NET.HttpUtility
         /// </summary>
         public static void RemoveHttpProxy()
         {
-            _webproxy = null;
+            SenparcHttpClientWebProxy = null;
         }
 
         /// <summary>
@@ -172,8 +191,9 @@ namespace Senparc.CO2NET.HttpUtility
         /// <param name="request"></param>
         /// <param name="refererUrl"></param>
         /// <param name="useAjax">是否使用Ajax</param>
+        /// <param name="headerAddition">header附加信息</param>
         /// <param name="timeOut"></param>
-        private static void HttpClientHeader(HttpWebRequest request, string refererUrl, bool useAjax, int timeOut)
+        private static void HttpClientHeader(HttpWebRequest request, string refererUrl, bool useAjax, Dictionary<string, string> headerAddition, int timeOut)
         {
             request.Accept = "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8";
             request.UserAgent = "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.57 Safari/537.36";
@@ -189,8 +209,17 @@ namespace Senparc.CO2NET.HttpUtility
             {
                 request.Headers.Add("X-Requested-With", "XMLHttpRequest");
             }
+
+            if (headerAddition != null)
+            {
+                foreach (var item in headerAddition)
+                {
+                    request.Headers.Add(item.Key, item.Value);
+                }
+            }
+
         }
-#else //NETSTANDARD1_6 || NETSTANDARD2_0 || NETCOREAPP2_0 || NETCOREAPP2_1
+#else // NETSTANDARD2_0
 
         /// <summary>
         /// 验证服务器证书
@@ -200,9 +229,16 @@ namespace Senparc.CO2NET.HttpUtility
         /// <param name="chain"></param>
         /// <param name="sslPolicyErrors"></param>
         /// <returns></returns>
-        private static bool CheckValidationResult(HttpRequestMessage request, X509Certificate2 certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
+        public static bool CheckValidationResult(HttpRequestMessage request, X509Certificate2 certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
         {
-            return true;
+            if (sslPolicyErrors == SslPolicyErrors.None)
+            {
+                return true;
+            }
+            else
+            {
+                return false;
+            }
         }
 
         private static StreamContent CreateFileContent(Stream stream, string formName, string fileName, string contentType = "application/octet-stream")
@@ -235,8 +271,9 @@ namespace Senparc.CO2NET.HttpUtility
         /// <param name="client"></param>
         /// <param name="refererUrl"></param>
         /// <param name="useAjax">是否使用Ajax</param>
+        /// <param name="headerAddition">header附加信息</param>
         /// <param name="timeOut"></param>
-        private static void HttpClientHeader(HttpClient client, string refererUrl, bool useAjax, int timeOut)
+        private static void HttpClientHeader(HttpClient client, string refererUrl, bool useAjax, Dictionary<string, string> headerAddition = null, int timeOut = Config.TIME_OUT)
         {
             client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("text/html"));
             client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/xhtml+xml"));
@@ -265,6 +302,14 @@ namespace Senparc.CO2NET.HttpUtility
             if (useAjax)
             {
                 client.DefaultRequestHeaders.Add("X-Requested-With", "XMLHttpRequest");
+            }
+
+            if (headerAddition != null)
+            {
+                foreach (var item in headerAddition)
+                {
+                    client.DefaultRequestHeaders.Add(item.Key, item.Value);
+                }
             }
         }
 
@@ -301,7 +346,7 @@ namespace Senparc.CO2NET.HttpUtility
         {
             string dataString = GetQueryString(formData);
             var formDataBytes = formData == null ? new byte[0] : Encoding.UTF8.GetBytes(dataString);
-            await stream.WriteAsync(formDataBytes, 0, formDataBytes.Length);
+            await stream.WriteAsync(formDataBytes, 0, formDataBytes.Length).ConfigureAwait(false);
             stream.Seek(0, SeekOrigin.Begin);//设置指针读取位置
         }
 
@@ -309,19 +354,6 @@ namespace Senparc.CO2NET.HttpUtility
 #endif
 
         #region 只需要使用同步的方法
-
-
-        ///// <summary>
-        ///// 请求是否发起自微信客户端的浏览器
-        ///// </summary>
-        ///// <param name="httpContext"></param>
-        ///// <returns></returns>
-        //[Obsolete("请使用Senparc.Weixin.BrowserUtility.BrowserUtility.SideInWeixinBrowser()方法")]
-        //public static bool IsWeixinClientRequest(this HttpContext httpContext)
-        //{
-        //    return !string.IsNullOrEmpty(httpContext.Request.UserAgent) &&
-        //           httpContext.Request.UserAgent.Contains("MicroMessenger");
-        //}
 
         /// <summary>
         /// 组装QueryString的方法
@@ -342,7 +374,7 @@ namespace Senparc.CO2NET.HttpUtility
             foreach (var kv in formData)
             {
                 i++;
-                sb.AppendFormat("{0}={1}", kv.Key, kv.Value);
+                sb.AppendFormat("{0}={1}", kv.Key, Senparc.CO2NET.Extensions.WebCodingExtensions.UrlEncode(kv.Value));
                 if (i < formData.Count)
                 {
                     sb.Append("&");

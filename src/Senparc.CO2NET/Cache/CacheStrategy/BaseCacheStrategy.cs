@@ -1,7 +1,7 @@
 ﻿#region Apache License Version 2.0
 /*----------------------------------------------------------------
 
-Copyright 2018 Jeffrey Su & Suzhou Senparc Network Technology Co.,Ltd.
+Copyright 2019 Suzhou Senparc Network Technology Co.,Ltd.
 
 Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file
 except in compliance with the License. You may obtain a copy of the License at
@@ -13,7 +13,7 @@ License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF 
 either express or implied. See the License for the specific language governing permissions
 and limitations under the License.
 
-Detail: https://github.com/JeffreySu/WeiXinMPSDK/blob/master/license.md
+Detail: https://github.com/Senparc/Senparc.CO2NET/blob/master/LICENSE
 
 ----------------------------------------------------------------*/
 #endregion Apache License Version 2.0
@@ -37,6 +37,7 @@ Detail: https://github.com/JeffreySu/WeiXinMPSDK/blob/master/license.md
 
 
 using System;
+using System.Threading.Tasks;
 
 namespace Senparc.CO2NET.Cache
 {
@@ -70,5 +71,18 @@ namespace Senparc.CO2NET.Cache
         /// <param name="retryDelay"></param>
         /// <returns></returns>
         public abstract ICacheLock BeginCacheLock(string resourceName, string key, int retryCount = 0, TimeSpan retryDelay = new TimeSpan());
+
+
+#if !NET35 && !NET40
+        /// <summary>
+        /// 【异步方法】创建一个（分布）锁
+        /// </summary>
+        /// <param name="resourceName">资源名称</param>
+        /// <param name="key">Key标识</param>
+        /// <param name="retryCount">重试次数</param>
+        /// <param name="retryDelay">重试延时</param>
+        /// <returns></returns>
+        public abstract Task<ICacheLock> BeginCacheLockAsync(string resourceName, string key, int retryCount = 0, TimeSpan retryDelay = new TimeSpan());
+#endif
     }
 }

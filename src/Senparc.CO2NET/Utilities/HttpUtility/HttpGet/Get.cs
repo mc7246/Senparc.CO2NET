@@ -1,7 +1,7 @@
 ﻿#region Apache License Version 2.0
 /*----------------------------------------------------------------
 
-Copyright 2018 Jeffrey Su & Suzhou Senparc Network Technology Co.,Ltd.
+Copyright 2019 Suzhou Senparc Network Technology Co.,Ltd.
 
 Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file
 except in compliance with the License. You may obtain a copy of the License at
@@ -13,7 +13,7 @@ License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF 
 either express or implied. See the License for the specific language governing permissions
 and limitations under the License.
 
-Detail: https://github.com/JeffreySu/WeiXinMPSDK/blob/master/license.md
+Detail: https://github.com/Senparc/Senparc.CO2NET/blob/master/LICENSE
 
 ----------------------------------------------------------------*/
 #endregion Apache License Version 2.0
@@ -49,6 +49,9 @@ Detail: https://github.com/JeffreySu/WeiXinMPSDK/blob/master/license.md
     修改标识：Senparc - 20180407
     修改描述：v14.10.13 优化 Get.Download() 方法，完善对 FileName 的判断
 
+    修改标识：Senparc - 20190429
+    修改描述：v0.7.0 优化 HttpClient，重构 RequestUtility（包括 Post 和 Get），引入 HttpClientFactory 机制
+
 ----------------------------------------------------------------*/
 
 
@@ -65,6 +68,8 @@ using Senparc.CO2NET.Helpers;
 #if NET35 || NET40 || NET45
 using System.Web.Script.Serialization;
 #endif
+
+
 //using Senparc.CO2NET.Entities;
 //using Senparc.CO2NET.Exceptions;
 using System.Text.RegularExpressions;
@@ -82,11 +87,11 @@ namespace Senparc.CO2NET.HttpUtility
         /// <returns></returns>
         private static string GetRandomFileName()
         {
-            return DateTime.Now.ToString("yyyyMMdd-HHmmss") + Guid.NewGuid().ToString("n").Substring(0, 6);
+            return SystemTime.Now.ToString("yyyyMMdd-HHmmss") + Guid.NewGuid().ToString("n").Substring(0, 6);
         }
 
 
-        #region 同步方法
+#region 同步方法
 
         /// <summary>
         /// GET方式请求URL，并返回T类型
@@ -126,7 +131,7 @@ namespace Senparc.CO2NET.HttpUtility
             //    stream.WriteByte(b);
             //}
 #else
-            HttpClient httpClient = new HttpClient();
+            HttpClient httpClient = SenparcDI.GetRequiredService<SenparcHttpClient>().Client;
             var t = httpClient.GetByteArrayAsync(url);
             t.Wait();
             var data = t.Result;
@@ -140,13 +145,14 @@ namespace Senparc.CO2NET.HttpUtility
         /// </summary>
         /// <param name="url">需要下载文件的Url</param>
         /// <param name="filePathName">保存文件的路径，如果下载文件包含文件名，按照文件名储存，否则将分配Ticks随机文件名</param>
+        /// <param name="timeOut">超时时间</param>
         /// <returns></returns>
         public static string Download(string url, string filePathName, int timeOut = 999)
         {
             var dir = Path.GetDirectoryName(filePathName) ?? "/";
             Directory.CreateDirectory(dir);
 
-#if NET35 || NET40
+#if NET35 || NET40 || NET45
 
             HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
             request.Method = "GET";
@@ -184,7 +190,7 @@ namespace Senparc.CO2NET.HttpUtility
             }
 
 #else
-            System.Net.Http.HttpClient httpClient = new HttpClient();
+            System.Net.Http.HttpClient httpClient = SenparcDI.GetRequiredService<SenparcHttpClient>().Client;
             using (var responseMessage = httpClient.GetAsync(url).Result)
             {
                 if (responseMessage.StatusCode == HttpStatusCode.OK)
@@ -234,7 +240,7 @@ namespace Senparc.CO2NET.HttpUtility
         /// <exception cref="ErrorJsonResultException"></exception>
         public static async Task<T> GetJsonAsync<T>(string url, Encoding encoding = null, Action<string, string> afterReturnText = null)
         {
-            string returnText = await RequestUtility.HttpGetAsync(url, encoding);
+            string returnText = await RequestUtility.HttpGetAsync(url, encoding).ConfigureAwait(false);
 
             afterReturnText?.Invoke(url, returnText);
 
@@ -256,16 +262,16 @@ namespace Senparc.CO2NET.HttpUtility
             //ServicePointManager.ServerCertificateValidationCallback = new RemoteCertificateValidationCallback(CheckValidationResult);
 
             WebClient wc = new WebClient();
-            var data = await wc.DownloadDataTaskAsync(url);
-            await stream.WriteAsync(data, 0, data.Length);
+            var data = await wc.DownloadDataTaskAsync(url).ConfigureAwait(false);
+            await stream.WriteAsync(data, 0, data.Length).ConfigureAwait(false);
             //foreach (var b in data)
             //{
             //    stream.WriteAsync(b);
             //}
 #else
-            HttpClient httpClient = new HttpClient();
-            var data = await httpClient.GetByteArrayAsync(url);
-            await stream.WriteAsync(data, 0, data.Length);
+            HttpClient httpClient = SenparcDI.GetRequiredService<SenparcHttpClient>().Client;
+            var data = await httpClient.GetByteArrayAsync(url).ConfigureAwait(false);
+            await stream.WriteAsync(data, 0, data.Length).ConfigureAwait(false);
 #endif
 
         }
@@ -274,15 +280,21 @@ namespace Senparc.CO2NET.HttpUtility
         /// 【异步方法】从Url下载，并保存到指定目录
         /// </summary>
         /// <param name="url">需要下载文件的Url</param>
-        /// <param name="filePathName"></param>
+        /// <param name="filePathName">保存文件的路径，如果下载文件包含文件名，按照文件名储存，否则将分配Ticks随机文件名</param>
+        /// <param name="timeOut">超时时间</param>
         /// <returns></returns>
-        public static async Task<string> DownloadAsync(string url, string filePathName)
+        public static async Task<string> DownloadAsync(string url, string filePathName, int timeOut = Config.TIME_OUT)
         {
             var dir = Path.GetDirectoryName(filePathName) ?? "/";
             Directory.CreateDirectory(dir);
 
+#if NET45
             System.Net.Http.HttpClient httpClient = new HttpClient();
-            using (var responseMessage = await httpClient.GetAsync(url))
+#else
+            System.Net.Http.HttpClient httpClient = SenparcDI.GetRequiredService<SenparcHttpClient>().Client;
+#endif
+            httpClient.Timeout = TimeSpan.FromMilliseconds(timeOut);
+            using (var responseMessage = await httpClient.GetAsync(url).ConfigureAwait(false))
             {
                 if (responseMessage.StatusCode == HttpStatusCode.OK)
                 {
@@ -298,10 +310,10 @@ namespace Senparc.CO2NET.HttpUtility
                     var fullName = responseFileName ?? Path.Combine(dir, GetRandomFileName());
                     using (var fs = File.Open(fullName, FileMode.Create))
                     {
-                        using (var responseStream = await responseMessage.Content.ReadAsStreamAsync())
+                        using (var responseStream = await responseMessage.Content.ReadAsStreamAsync().ConfigureAwait(false))
                         {
-                            await responseStream.CopyToAsync(fs);
-                            await fs.FlushAsync();
+                            await responseStream.CopyToAsync(fs).ConfigureAwait(false);
+                            await fs.FlushAsync().ConfigureAwait(false);
                         }
                     }
                     return fullName;

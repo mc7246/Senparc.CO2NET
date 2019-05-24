@@ -1,7 +1,7 @@
 ﻿#region Apache License Version 2.0
 /*----------------------------------------------------------------
 
-Copyright 2018 Jeffrey Su & Suzhou Senparc Network Technology Co.,Ltd.
+Copyright 2019 Suzhou Senparc Network Technology Co.,Ltd.
 
 Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file
 except in compliance with the License. You may obtain a copy of the License at
@@ -13,7 +13,7 @@ License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF 
 either express or implied. See the License for the specific language governing permissions
 and limitations under the License.
 
-Detail: https://github.com/JeffreySu/WeiXinMPSDK/blob/master/license.md
+Detail: https://github.com/Senparc/Senparc.CO2NET/blob/master/LICENSE
 
 ----------------------------------------------------------------*/
 #endregion Apache License Version 2.0
@@ -118,7 +118,7 @@ namespace Senparc.CO2NET.Utilities
         {
             byte[] arr = new byte[stream.Length];
             stream.Position = 0;
-            await stream.ReadAsync(arr, 0, (int)stream.Length);
+            await stream.ReadAsync(arr, 0, (int)stream.Length).ConfigureAwait(false);
 #if NET35 || NET40 || NET45
             return Convert.ToBase64String(arr, Base64FormattingOptions.None);
 #else
@@ -137,11 +137,11 @@ namespace Senparc.CO2NET.Utilities
             byte[] bytes = Convert.FromBase64String(base64String);
 
             var memoryStream = new MemoryStream(bytes, 0, bytes.Length);
-            await memoryStream.WriteAsync(bytes, 0, bytes.Length);
+            await memoryStream.WriteAsync(bytes, 0, bytes.Length).ConfigureAwait(false);
 
             if (!string.IsNullOrEmpty(savePath))
             {
-                await SaveFileFromStreamAsync(memoryStream, savePath);
+                await SaveFileFromStreamAsync(memoryStream, savePath).ConfigureAwait(false);
             }
 
             memoryStream.Seek(0, SeekOrigin.Begin);
@@ -158,7 +158,7 @@ namespace Senparc.CO2NET.Utilities
             memoryStream.Seek(0, SeekOrigin.Begin);
             using (var localFile = new FileStream(savePath, FileMode.OpenOrCreate))
             {
-                await localFile.WriteAsync(memoryStream.ToArray(), 0, (int)memoryStream.Length);
+                await localFile.WriteAsync(memoryStream.ToArray(), 0, (int)memoryStream.Length).ConfigureAwait(false);
             }
         }
 
